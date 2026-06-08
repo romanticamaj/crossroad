@@ -17,8 +17,53 @@ public changelog automatically (LLM-generated). Revenue model is subscription.
 | Styling        | **Tailwind CSS v4**             | Fast, consistent UI without bikeshedding; easy for the upcoming landing page (CRO-3). |
 | Linting        | **ESLint** (`eslint-config-next`) | Catches issues in CI. |
 | Package manager | **npm**                        | Default, zero extra tooling; `npm ci` in CI is reproducible. |
+| Database + Auth | **Supabase** (managed Postgres) | One managed service gives us Postgres + email/password auth + RLS. Lean: no separate auth service to run. Adopted in M0.2 (waitlist) and extended in M0.3. |
+| Auth client    | **`@supabase/ssr`**             | Cookie-based sessions that work across Server Components, Server Actions, and Route Handlers in the App Router. |
+| Billing        | **Stripe** (test mode)          | Industry standard. Hosted Checkout + Customer Portal means we don't handle card data; webhooks keep our DB in sync. |
+| Validation     | **Zod**                         | Small, typed runtime validation for form input. |
 
 Source lives under `src/app` (App Router). The home route is `src/app/page.tsx`.
+
+## Auth, database & billing (M0.3 — CRO-4)
+
+The first server-side features live here. This is also why the app moved from a
+static export to a server runtime (see Deployment).
+
+**Database** — two tables added in `supabase/migrations` (alongside M0.2's
+`waitlist`/`events`):
+
+- `profiles` — one row per `auth.users` row (auto-created by a trigger on
+  signup). Holds the user's `stripe_customer_id`.
+- `subscriptions` — a mirror of Stripe subscription state (status, price,
+  period, cancel-at-period-end).
+
+Both have **Row Level Security** on: a user can read only their own rows.
+`subscriptions` has *no* write policy for users — only the service role (the
+webhook) writes it, so billing state can't be forged from the client.
+
+**Auth** — Supabase email/password.
+
+- `src/lib/supabase/{server,client,admin}.ts` — three clients: server
+  (cookie session), browser (publishable key), and admin (service-role,
+  webhook-only, bypasses RLS).
+- `src/app/actions/auth.ts` — `signup` / `login` / `logout` Server Actions.
+- `src/proxy.ts` — Next 16's renamed middleware. Refreshes the session on every
+  request and does optimistic redirects (guards `/dashboard`, bounces logged-in
+  users off `/login` and `/signup`).
+
+**Billing** — Stripe subscriptions, test mode.
+
+- `POST /api/stripe/checkout` → Stripe Checkout for the placeholder plan.
+- `POST /api/stripe/portal` → Stripe Customer Portal (manage/cancel).
+- `POST /api/stripe/webhook` → verifies the Stripe signature and upserts
+  subscription state into the DB. This is what makes the DB reflect reality.
+
+**Secrets** — all config is via environment variables (`.env.example`
+documents them). Nothing secret is committed; `.env.local` is gitignored.
+
+**Verification** — `scripts/verify-local.mjs` proves the full flow against the
+local Supabase stack + a running dev server: sign up → session → profile
+trigger → login → webhook → subscription row visible via RLS.
 
 ## Waitlist + analytics store (M0.2)
 
@@ -54,42 +99,37 @@ Green CI on `main` is a release gate.
 
 ## Deployment
 
-**Target (M0.1): GitHub Pages** via `.github/workflows/deploy.yml` on push to
-`main`. The app is exported as a fully static site (`output: "export"` in
-`next.config.ts`) into `./out`, then published with the official
-`actions/configure-pages` → `actions/upload-pages-artifact` → `actions/deploy-pages`
-pipeline.
+**M0.1–M0.2 (retired): GitHub Pages static export.** Through the landing page,
+the app was a fully static export (`output: "export"`) published to GitHub Pages.
 
-Live URL: **https://romanticamaj.github.io/crossroad/**
+**M0.3 onward: a server runtime is required.** Auth, the database session, and
+the Stripe webhook are server-side — a static export literally can't build them
+(`next build` no longer emits `./out`). As `ARCHITECTURE` always anticipated,
+CRO-4 is the point where the **deploy target** moves from GitHub Pages to a
+server platform. The Next.js code is host-agnostic; only the host changes.
 
-### Why GitHub Pages (and not Vercel/Fly/Render yet)
+The GitHub Pages workflow has therefore been removed. **Choosing the new host is
+a CEO call** because it involves an external account and a (small) spend
+decision — see the CRO-4 escalation.
 
-The M0.1 success condition is "a deployed public URL serves the app, and CI is
-green." GitHub Pages is the cheapest path that meets it:
+> **Recommendation: Vercel.** First-class Next.js support, generates a public
+> URL, env-var/secret management built in, and a $0 hobby tier is enough for
+> test-mode validation. Fly/Render are fine alternatives if we prefer a generic
+> container host. Whichever we pick, the env vars in `.env.example` are set as
+> deployment secrets and the app runs unchanged.
 
-- **$0 and no new account/billing.** Vercel/Render free tiers are non-commercial;
-  using them for a revenue product implies a paid tier — a spend decision we don't
-  need to make to ship a foundation.
-- **Fully self-serve.** Everything runs through the GitHub account we already
-  control. No external OAuth handoff that could block automation.
-
-### This is a reversible decision (not a one-way door)
-
-GitHub Pages serves static files only. The moment we need server-side rendering or
-API routes — waitlist capture (CRO-3), auth + database + billing (CRO-4), and
-LLM changelog generation (CRO-5) — we migrate the **deploy target** to a server
-platform (Vercel / Fly / Render). The Next.js codebase does not change; we drop
-`output: "export"` and point the deploy workflow at the new host. CRO-4 is the
-natural point to make that hosting call, since it introduces the first backend.
+CI (`ci.yml`) still builds on every push and remains the release gate.
 
 ## Local development
 
 ```bash
 npm install
-npm run dev      # http://localhost:3000 (no basePath locally)
+supabase start                 # local Postgres + Auth (Docker); prints keys
+cp .env.example .env.local     # fill in the supabase + stripe values
+npm run dev                    # http://localhost:3000
 npm run lint
-npm run build    # static export to ./out
+npm run build                  # production (server) build
 ```
 
-`NEXT_PUBLIC_BASE_PATH` is set only by the deploy workflow (to `/crossroad`) so the
-project-site base path applies in production but never locally.
+See the README "Local setup" section for the full auth + Stripe walkthrough,
+including how to run `scripts/verify-local.mjs`.

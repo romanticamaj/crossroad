@@ -1,20 +1,14 @@
 import type { NextConfig } from "next";
 
-// In CI/production we deploy to GitHub Pages as a *project* site, served from
-// https://<user>.github.io/<repo>. That requires a basePath equal to the repo
-// name. Locally (next dev) we want no basePath so http://localhost:3000 works.
-// The deploy workflow sets NEXT_PUBLIC_BASE_PATH; everywhere else it is empty.
-const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
-
+// CRO-4 introduces the first server-side features — auth, a database, and
+// Stripe webhooks — so the app can no longer be a fully static export. We now
+// build for a Node server runtime (the default). The GitHub Pages static-export
+// deploy from M0.1 is therefore retired; see ARCHITECTURE.md ("Deployment") for
+// the hosting migration.
 const nextConfig: NextConfig = {
-  // Emit a fully static site into ./out so it can be served by any static host
-  // (GitHub Pages today; trivially swappable for a server platform later).
-  output: "export",
-  basePath: basePath || undefined,
-  // Pages has no trailing-slash rewriting, so generate index.html per route.
-  trailingSlash: true,
+  // next/image optimization is fine on a server runtime, but we keep it
+  // unoptimized to avoid an image-optimization service dependency for now.
   images: {
-    // next/image optimization needs a server; static export uses raw <img>.
     unoptimized: true,
   },
 };
