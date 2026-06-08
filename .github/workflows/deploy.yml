@@ -38,8 +38,14 @@ jobs:
       - name: Build (static export)
         # Project Pages are served under /<repo>; configure-pages resolves the
         # correct base_path so assets and links don't 404.
+        # Supabase URL + anon key are public-by-design (anon key + insert-only
+        # RLS), injected so the static client can write to the waitlist +
+        # analytics store. Empty until the secrets are set — the page still
+        # builds and deploys; the waitlist just degrades gracefully.
         env:
           NEXT_PUBLIC_BASE_PATH: ${{ steps.pages.outputs.base_path }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
         run: npm run build
 
       - name: Upload Pages artifact

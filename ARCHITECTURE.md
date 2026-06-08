@@ -20,6 +20,28 @@ public changelog automatically (LLM-generated). Revenue model is subscription.
 
 Source lives under `src/app` (App Router). The home route is `src/app/page.tsx`.
 
+## Waitlist + analytics store (M0.2)
+
+The landing page (CRO-3) needs to **persist waitlist emails** and **record page
+views** — but M0.1 deploys a *fully static* site to GitHub Pages, which has no
+server or API routes. Rather than migrate hosting early (the architecture defers
+that to CRO-4), M0.2 writes directly from the browser to **Supabase**:
+
+| Concern | Choice | Why |
+| ------- | ------ | --- |
+| Store | **Supabase (Postgres)** | $0 free tier, browser-callable REST, and it becomes the CRO-4 backend (auth + DB + billing). One coherent backend instead of a throwaway. |
+| Client access | **anon key + insert-only RLS** | The anon key is public-by-design. Row Level Security lets the browser `INSERT` into `waitlist`/`events` but never `SELECT` — the list is write-only from the client, readable only via the service role/dashboard. |
+| Analytics | **first-party events table** | Privacy-respecting: no cookies, no fingerprinting, no third-party tracker, no PII. We store event type, path, and a coarse referrer host only. Page views + signups in one place. |
+| Client lib | **hand-rolled `fetch` wrapper** (`src/lib/store.ts`) | Two unauthenticated inserts don't justify a dependency on a static bundle. CRO-4 adopts `@supabase/supabase-js` when auth arrives. |
+
+Schema + policies live in `supabase/migrations/0001_waitlist_and_events.sql`.
+The client reads `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY`,
+injected at build time by the deploy workflow from GitHub Actions secrets. When
+those are absent (local dev, PRs, or before the project is provisioned) the page
+still builds and deploys; the waitlist form degrades gracefully.
+
+This is reversible: it does not commit us to a host, and it advances CRO-4.
+
 ## CI
 
 `.github/workflows/ci.yml` runs on every push and pull request to any branch:
